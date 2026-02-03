@@ -1,62 +1,31 @@
 import logging
-import json
-import traceback
-from datetime import datetime
 import os
+from datetime import datetime
 
 LOG_DIR = "logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 
-class JsonFormatter(logging.Formatter):
-    def format(self, record):
-        log_record = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "level": record.levelname,
-            "message": record.getMessage(),
-        }
+LOG_FILE = os.path.join(LOG_DIR, "nexus.log")
 
-        if hasattr(record, "extra_data"):
-            log_record.update(record.extra_data)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler()
+    ]
+)
 
-        if record.exc_info:
-            log_record["traceback"] = traceback.format_exc()
-
-        return json.dumps(log_record)
+logger = logging.getLogger("Nexus")
 
 
-def get_logger(name="NEXUS_ENGINE"):
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
-
-    if logger.handlers:
-        return logger  # prevent duplicate handlers
-
-    formatter = JsonFormatter()
-
-    # Console handler (GitHub Actions friendly)
-    ch = logging.StreamHandler()
-    ch.setFormatter(formatter)
-
-    # File handler
-    fh = logging.FileHandler(f"{LOG_DIR}/nexus.log")
-    fh.setFormatter(formatter)
-
-    logger.addHandler(ch)
-    logger.addHandler(fh)
-
-    return logger
+def log_event(message: str):
+    logger.info(message)
 
 
-LOGGER = get_logger()
+def log_error(message: str):
+    logger.error(message)
 
 
-def log_event(event, **kwargs):
-    LOGGER.info(event, extra={"extra_data": {"event": event, **kwargs}})
-
-
-def log_error(event, error: Exception, **kwargs):
-    LOGGER.error(
-        event,
-        extra={"extra_data": {"event": event, "error": str(error), **kwargs}},
-        exc_info=True,
-    )
+def log_signal(signal: dict):
+    logger.info(f"SIGNAL | {signal}")
