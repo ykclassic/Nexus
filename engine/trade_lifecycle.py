@@ -1,43 +1,32 @@
-from elite_logger import log_event
-from discord_alert import send_discord_alert
+from engine.elite_logger import log_event
 
-class TradeLifecycle:
-    def __init__(self):
-        self.trades = {}
 
-    def open_trade(self, trade_id, symbol, entry, sl, tp, confidence):
-        trade = {
-            "status": "OPEN",
-            "symbol": symbol,
-            "entry": entry,
-            "sl": sl,
-            "tp": tp,
-            "confidence": confidence,
-        }
-
-        self.trades[trade_id] = trade
-
-        log_event("TRADE_OPENED", trade_id=trade_id, **trade)
-
-        send_discord_alert(
-            "🚀 NEW ELITE SIGNAL",
-            f"{symbol} trade opened",
-            trade,
+def register_trade(conn, signal):
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS trades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT,
+            direction TEXT,
+            entry REAL,
+            sl REAL,
+            tp REAL,
+            confidence REAL,
+            status TEXT DEFAULT 'OPEN',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
+    """)
+    c.execute("""
+        INSERT INTO trades(symbol, direction, entry, sl, tp, confidence)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        signal["symbol"],
+        signal["direction"],
+        signal["entry"],
+        signal["sl"],
+        signal["tp"],
+        signal["confidence"]
+    ))
+    conn.commit()
 
-    def close_trade(self, trade_id, result, price):
-        if trade_id not in self.trades:
-            return
-
-        trade = self.trades[trade_id]
-        trade["status"] = "CLOSED"
-        trade["result"] = result
-        trade["close_price"] = price
-
-        log_event("TRADE_CLOSED", trade_id=trade_id, **trade)
-
-        send_discord_alert(
-            "✅ TRADE CLOSED",
-            f"{trade['symbol']} hit {result}",
-            trade,
-        )
+    log_event(f"Trade registered: {signal['symbol']}")
