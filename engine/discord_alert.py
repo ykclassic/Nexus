@@ -1,44 +1,39 @@
+import os
 import requests
 import time
-from elite_logger import log_event, log_error
+from engine.elite_logger import log_event, log_error
 
-DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")  # store in GitHub Secrets
-
-MAX_RETRIES = 5
-RETRY_DELAY = 2  # seconds
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
 
 
-def send_discord_alert(title, message, data=None):
+def send_discord_alert(signal: dict, retries=3):
     if not DISCORD_WEBHOOK:
-        log_error("DISCORD_WEBHOOK_MISSING", Exception("Webhook not set"))
+        log_error("Discord webhook not set")
         return
 
-    payload = {
-        "embeds": [
-            {
-                "title": title,
-                "description": message,
-                "color": 65280,
-                "fields": [
-                    {"name": k, "value": str(v), "inline": True}
-                    for k, v in (data or {}).items()
-                ],
-            }
-        ]
-    }
+    msg = (
+        f"🚨 **NEXUS SIGNAL**\n"
+        f"Symbol: {signal['symbol']}\n"
+        f"Direction: {signal['direction']}\n"
+        f"Entry: {signal['entry']}\n"
+        f"SL: {signal['sl']}\n"
+        f"TP: {signal['tp']}\n"
+        f"Confidence: {signal['confidence']}%"
+    )
 
-    for attempt in range(1, MAX_RETRIES + 1):
+    payload = {"content": msg}
+
+    for attempt in range(retries):
         try:
-            res = requests.post(DISCORD_WEBHOOK, json=payload, timeout=10)
-
-            if res.status_code in [200, 204]:
-                log_event("DISCORD_ALERT_SENT", attempt=attempt)
-                return True
+            r = requests.post(DISCORD_WEBHOOK, json=payload, timeout=10)
+            if r.status_code == 204:
+                log_event("Discord alert sent successfully")
+                return
             else:
-                raise Exception(f"HTTP {res.status_code}")
-
+                log_error(f"Discord error: {r.text}")
         except Exception as e:
-            log_error("DISCORD_ALERT_FAILED", e, attempt=attempt)
-            time.sleep(RETRY_DELAY * attempt)
+            log_error(f"Discord exception: {str(e)}")
 
-    return False
+        time.sleep(2)
+
+    log_error("Discord alert failed after retries")
