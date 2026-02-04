@@ -1,94 +1,89 @@
-import sqlite3
-from concurrent.futures import ThreadPoolExecutor
+import ccxt
+import pandas as pd
 from engine.elite_logger import log_event, log_error
-from engine.discord_alert import send_discord_alert
+from engine.exchange_retry import safe_call
+from engine.db.db_utils import init_db, get_conn
 from engine.trade_lifecycle import register_trade
+from engine.discord_alert import send_discord_alert
+
 from engine.intelligence.feature_engine import compute_features
-from engine.intelligence.signal_filters import basic_filters
-from engine.intelligence.signal_scoring import score_signal
-from engine.intelligence.signal_ranker import select_elite_signals
+from engine.intelligence.market_regime import detect_market_regime
+from engine.intelligence.consensus_engine import consensus
+from engine.intelligence.probability_engine import probability_score
 from engine.intelligence.signal_validator import validate_trade
+from engine.intelligence.rarity_control import allow_signal
 
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-DB_FILE = "data/trading.db"
-
-
-def get_connection():
-    return sqlite3.connect(DB_FILE, check_same_thread=False)
+SYMBOLS = ["BTC/USDT","ETH/USDT","SOL/USDT","BNB/USDT","XRP/USDT"]
+TIMEFRAME = "1h"
 
 
-def fetch_market_data(symbol):
-    # TODO: replace with real exchange fetch
-    import random
-    return {
-        "entry": round(random.uniform(100, 200), 2),
-        "sl": round(random.uniform(90, 99), 2),
-        "tp": round(random.uniform(210, 250), 2),
-        "direction": "LONG"
-    }
-
-
-def process_symbol(symbol):
-    try:
-        conn = get_connection()
-
-        # Dummy OHLCV data (replace with real)
-        import pandas as pd
-        import numpy as np
-        df = pd.DataFrame({
-            "close": np.random.rand(100),
-            "high": np.random.rand(100),
-            "low": np.random.rand(100),
-            "volume": np.random.rand(100)
-        })
-
-        features = compute_features(df)
-
-        if not basic_filters(features):
-            return None
-
-        market = fetch_market_data(symbol)
-
-        if not validate_trade(market["entry"], market["sl"], market["tp"]):
-            return None
-
-        confidence = score_signal(features, market["direction"])
-
-        signal = {
-            "symbol": symbol,
-            "direction": market["direction"],
-            "entry": market["entry"],
-            "sl": market["sl"],
-            "tp": market["tp"],
-            "confidence": confidence
-        }
-
-        register_trade(conn, signal)
-
-        conn.close()
-        return signal
-
-    except Exception as e:
-        log_error(f"Symbol processing error {symbol}: {str(e)}")
+def fetch_ohlcv(exchange, symbol):
+    data = safe_call(lambda: exchange.fetch_ohlcv(symbol, TIMEFRAME, limit=200))
+    if not data:
         return None
+    df = pd.DataFrame(data, columns=["time","open","high","low","close","volume"])
+    return df
 
 
 def run_engine():
-    log_event("Nexus Engine Started")
+    init_db()
+    log_event("🚀 Nexus Engine Started")
 
-    signals = []
+    exchange = ccxt.gateio({"enableRateLimit": True})
+    approved = []
+    signals_today = 0
 
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        results = executor.map(process_symbol, SYMBOLS)
+    for symbol in SYMBOLS:
+        try:
+            df = fetch_ohlcv(exchange, symbol)
+            if df is None:
+                continue
 
-    for s in results:
-        if s:
-            signals.append(s)
+            features = compute_features(df)
+            regime = detect_market_regime(features)
 
-    elite_signals = select_elite_signals(signals, limit=1)
+            if not consensus(features, regime):
+                continue
 
-    for signal in elite_signals:
-        log_event(f"ELITE SIGNAL: {signal}")
-        send_discord_alert(signal)
+            entry = float(df["close"].iloc[-1])
+            sl = entry * 0.99
+            tp = entry * 1.03
+            direction = "LONG"
 
-    log_event(f"Signals generated: {len(signals)}, Elite: {len(elite_signals)}")
+            if not validate_trade(entry, sl, tp):
+                continue
+
+            confidence = probability_score(features)
+            rr = abs(tp - entry) / abs(entry - sl)
+
+            if not allow_signal(signals_today):
+                continue
+
+            signal = {
+                "symbol": symbol,
+                "direction": direction,
+                "entry": round(entry, 4),
+                "sl": round(sl, 4),
+                "tp": round(tp, 4),
+                "confidence": confidence,
+                "rr": rr,
+                "regime": regime,
+                "features": features
+            }
+
+            conn = get_conn()
+            register_trade(conn, signal)
+            conn.close()
+
+            approved.append(signal)
+            signals_today += 1
+
+        except Exception as e:
+            log_error(f"{symbol} failed: {e}")
+
+    if approved:
+        best = sorted(approved, key=lambda s: s["confidence"], reverse=True)[0]
+        send_discord_alert(best)
+        log_event(f"🔥 Elite signal sent: {best['symbol']}")
+
+    log_event(f"Engine finished | Signals: {len(approved)}")
