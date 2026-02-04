@@ -2,53 +2,134 @@ name: Nexus Trading Engine
 
 on:
   schedule:
-    - cron: "0 * * * *"   # every hour
+    - cron: "*/20 * * * *"   # every 20 minutes
   workflow_dispatch:
+
+concurrency:
+  group: nexus-engine-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   nexus-engine:
-    runs-on: ubuntu-latest
-    timeout-minutes: 12   # increased for heavy logic
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    permissions:
+      contents: write
 
     steps:
-      - name: Checkout repo
+      # ===============================
+      # CHECKOUT REPO
+      # ===============================
+      - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
+      # ===============================
+      # SETUP PYTHON
+      # ===============================
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install dependencies
+      # ===============================
+      # INSTALL DEPENDENCIES
+      # ===============================
+      - name: Install Dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # ===============================
+      # DEBUG ENVIRONMENT
+      # ===============================
+      - name: Debug Environment
+        run: |
+          echo "Python version:"
+          python --version
+          echo "Repo files:"
+          ls -R
+
+      # ===============================
+      # VERIFY DISCORD WEBHOOK
+      # ===============================
+      - name: Check Discord Webhook
+        run: |
+          if [ -z "${{ secrets.DISCORD_WEBHOOK }}" ]; then
+            echo "⚠️ DISCORD_WEBHOOK secret not set"
+          else
+            echo "✅ DISCORD_WEBHOOK secret is set"
+          fi
+
+      # ===============================
+      # RUN NEXUS ENGINE
+      # ===============================
       - name: Run Nexus Engine
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
         run: |
           echo "🚀 Starting Nexus Engine..."
-          python trainer_daemon.py || echo "Engine exited with error"
+          python trainer_daemon.py || echo "⚠️ Engine exited with error but workflow continues"
 
-      # ✅ Show logs in GitHub Actions
-      - name: Print Nexus Logs
+      # ===============================
+      # SHOW LOGS (IMPORTANT)
+      # ===============================
+      - name: Show Nexus Logs
         if: always()
         run: |
-          echo "==== NEXUS LOGS ===="
+          echo "====== NEXUS LOGS ======"
           if [ -f logs/nexus.log ]; then
             tail -200 logs/nexus.log
           else
-            echo "No logs found"
+            echo "No log file found"
           fi
 
-      # ✅ Optional: commit DB updates
-      - name: Commit DB changes
+      # ===============================
+      # CHECK DATABASE CHANGES
+      # ===============================
+      - name: Check DB Changes
+        id: dbcheck
+        run: |
+          if [ -f data/trading.db ]; then
+            git status --porcelain data/trading.db > db_status.txt
+            if [ -s db_status.txt ]; then
+              echo "changed=true" >> $GITHUB_OUTPUT
+            else
+              echo "changed=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      # ===============================
+      # COMMIT DATABASE UPDATES
+      # ===============================
+      - name: Commit DB Updates
+        if: steps.dbcheck.outputs.changed == 'true'
+        run: |
+          echo "📦 Committing trading.db updates..."
+
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+
+          git add data/trading.db
+
+          git commit -m "🤖 Nexus DB Update $(date -u +"%Y-%m-%d %H:%M:%S UTC")" || echo "No changes to commit"
+
+          git pull --rebase
+          git push
+
+      # ===============================
+      # FINAL SUMMARY
+      # ===============================
+      - name: Workflow Summary
         if: always()
         run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          git add data/trading.db || true
-          git commit -m "🤖 Nexus auto-update DB" || echo "No DB changes"
-          git push || echo "No changes to push"
+          echo "============================="
+          echo "NEXUS WORKFLOW COMPLETED"
+          echo "Status: ${{ job.status }}"
+          echo "Run ID: ${{ github.run_number }}"
+          echo "============================="
