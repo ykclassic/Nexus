@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS signals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT,
+    timeframe TEXT,
+    direction TEXT,
+    entry REAL,
+    sl REAL,
+    tp REAL,
+    confidence REAL,
+    rr REAL,
+    score REAL,
+    strategy TEXT,
+    market_regime TEXT,
+    trend_strength REAL,
+    momentum REAL,
+    volatility REAL,
+    volume_spike REAL,
+    rsi REAL,
+    status TEXT DEFAULT 'OPEN',
+    result REAL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    closed_at TIMESTAMP
+);
