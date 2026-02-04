@@ -1,14 +1,18 @@
-name: Nexus Engine Runner
+ name: Nexus Engine Runner
 
 on:
   workflow_dispatch:
   schedule:
     - cron: "0 * * * *"
 
+concurrency:
+  group: nexus-engine
+  cancel-in-progress: true   # prevent overlapping runs
+
 jobs:
   run-nexus:
     runs-on: ubuntu-latest
-    timeout-minutes: 8  # Total job timeout
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -27,31 +31,36 @@ jobs:
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$(pwd)" >> $GITHUB_ENV
 
-      - name: Ensure Python path patch exists
+      - name: Patch Python path (safe)
         run: |
           if ! grep -q "sys.path.append" trainer_daemon.py; then
             sed -i '1i import sys, os\nsys.path.append(os.path.dirname(os.path.abspath(__file__)))\n' trainer_daemon.py
           fi
 
-      - name: Run Nexus Engine with Timeout
-        timeout-minutes: 5
-        id: run-engine
+      - name: Run Nexus Engine (Fail-Fast Mode)
+        id: engine
         run: |
-          echo "🚀 Starting Nexus Engine at $(date)"
-          
-          # Run with 4-minute timeout (240 seconds)
-          timeout 240 python trainer_daemon.py
-          
-          EXIT_CODE=$?
-          echo "Exit code: $EXIT_CODE"
-          
-          if [ $EXIT_CODE -eq 124 ]; then
-            echo "❌ Script timed out after 4 minutes"
-            echo "::error::Engine timed out - check for infinite loops"
+          echo "🚀 Nexus Engine started: $(date)"
+
+          # hard kill after 300 seconds
+          timeout 300 python -u trainer_daemon.py 2>&1 | tee engine.log
+
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
+
+          if [ "$EXIT_CODE" -eq 124 ]; then
+            echo "::error::Nexus Engine timed out (deadlock or API freeze)"
             exit 1
-          elif [ $EXIT_CODE -ne 0 ]; then
-            echo "⚠️ Script failed with exit code $EXIT_CODE"
+          elif [ "$EXIT_CODE" -ne 0 ]; then
+            echo "::error::Nexus Engine crashed with exit code $EXIT_CODE"
             exit $EXIT_CODE
           fi
-          
-          echo "✅ Engine completed at $(date)"
+
+          echo "✅ Nexus Engine finished successfully"
+
+      - name: Upload Engine Logs (Debug)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nexus-engine-logs
+          path: engine.log
