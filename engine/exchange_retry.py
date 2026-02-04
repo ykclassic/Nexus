@@ -1,13 +1,11 @@
 import time
-from elite_logger import log_error, log_event
+from engine.elite_logger import log_error
 
-def safe_exchange_call(func, *args, retries=5, delay=2, **kwargs):
-    for attempt in range(1, retries + 1):
+def safe_call(func, retries=3, delay=2):
+    for i in range(retries):
         try:
-            return func(*args, **kwargs)
+            return func()
         except Exception as e:
-            log_error("EXCHANGE_CALL_FAILED", e, attempt=attempt)
-            time.sleep(delay * attempt)
-
-    log_event("EXCHANGE_CALL_ABORTED")
+            log_error("Exchange call failed", {"attempt": i+1, "error": str(e)})
+            time.sleep(delay)
     return None
