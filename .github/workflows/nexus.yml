@@ -3,11 +3,12 @@ name: Nexus Engine Runner
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 * * * *"   # runs every hour
+    - cron: "0 * * * *"
 
 jobs:
   run-nexus:
     runs-on: ubuntu-latest
+    timeout-minutes: 8  # Total job timeout
 
     steps:
       - name: Checkout repository
@@ -23,18 +24,34 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ✅ Critical fix: ensure Python sees project root
       - name: Set PYTHONPATH
         run: echo "PYTHONPATH=$(pwd)" >> $GITHUB_ENV
 
-      # ✅ Inject runtime path fix into trainer_daemon.py (safe)
       - name: Ensure Python path patch exists
         run: |
           if ! grep -q "sys.path.append" trainer_daemon.py; then
             sed -i '1i import sys, os\nsys.path.append(os.path.dirname(os.path.abspath(__file__)))\n' trainer_daemon.py
           fi
 
-      - name: Run Nexus Engine
+      - name: Run Nexus Engine with Timeout
+        timeout-minutes: 5
+        id: run-engine
         run: |
-          echo "🚀 Starting Nexus Engine..."
-          python trainer_daemon.py || echo "⚠️ Engine exited with error but workflow continues"
+          echo "🚀 Starting Nexus Engine at $(date)"
+          
+          # Run with 4-minute timeout (240 seconds)
+          timeout 240 python trainer_daemon.py
+          
+          EXIT_CODE=$?
+          echo "Exit code: $EXIT_CODE"
+          
+          if [ $EXIT_CODE -eq 124 ]; then
+            echo "❌ Script timed out after 4 minutes"
+            echo "::error::Engine timed out - check for infinite loops"
+            exit 1
+          elif [ $EXIT_CODE -ne 0 ]; then
+            echo "⚠️ Script failed with exit code $EXIT_CODE"
+            exit $EXIT_CODE
+          fi
+          
+          echo "✅ Engine completed at $(date)"
