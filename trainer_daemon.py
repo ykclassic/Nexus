@@ -1,6 +1,7 @@
-from engine.db import init_db
 from engine.runner import run_engine
+import time
 
 if __name__ == "__main__":
-    init_db()
-    run_engine()
+    while True:
+        run_engine()
+        time.sleep(60)  # run every minute (you can change)
