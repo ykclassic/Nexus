@@ -1,18 +1,22 @@
+# Nexus/engine/runner.py
+
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from engine.config import SYMBOLS, MIN_CONFIDENCE, MAX_THREADS, TIMEFRAME
-from engine.db import init_db, get_connection
-from engine.elite_logger import log_event, log_error
-from engine.discord_alert import send_discord_alert
-from engine.exchange_retry import safe_call
-from engine.trade_lifecycle import create_signal
-from engine.intelligence.signal_scoring import score_signal
+import ccxt
+
+from Nexus.engine.config import SYMBOLS, MIN_CONFIDENCE, MAX_THREADS, TIMEFRAME
+from Nexus.engine.db import init_db, get_connection
+from Nexus.engine.elite_logger import log_event, log_error
+from Nexus.engine.discord_alert import send_discord_alert
+from Nexus.engine.exchange_retry import safe_call
+from Nexus.engine.trade_lifecycle import create_signal
+from Nexus.engine.intelligence.signal_scoring import score_signal
 
 
 def fetch_market_data(exchange, symbol):
-    ohlcv = safe_call(exchange.fetch_ohlcv, symbol, TIMEFRAME, limit=50)
-    ticker = safe_call(exchange.fetch_ticker, symbol)
+    ohlcv = safe_call(lambda: exchange.fetch_ohlcv(symbol, TIMEFRAME, limit=50))
+    ticker = safe_call(lambda: exchange.fetch_ticker(symbol))
 
     if not ohlcv or not ticker:
         return None
@@ -36,6 +40,9 @@ def elite_signal_logic(market):
     lows = market["lows"]
     price = market["price"]
 
+    if len(closes) < 20:
+        return None
+
     short_ma = sum(closes[-5:]) / 5
     long_ma = sum(closes[-20:]) / 20
 
@@ -46,13 +53,16 @@ def elite_signal_logic(market):
 
     volatility = (max(highs[-10:]) - min(lows[-10:])) / price
 
+    side = None
     if trend == "BULLISH" and sweep_low:
         side = "LONG"
     elif trend == "BEARISH" and sweep_high:
         side = "SHORT"
-    else:
+
+    if not side:
         return None
 
+    # volatility filter (quality gate)
     if volatility < 0.002:
         return None
 
@@ -97,7 +107,7 @@ def process_symbol(exchange, symbol):
             "entry": round(raw_signal["entry"], 6),
             "sl": round(raw_signal["sl"], 6),
             "tp": round(raw_signal["tp"], 6),
-            "confidence": round(confidence, 4),
+            "confidence": confidence,
         }
 
         create_signal(signal)
@@ -120,7 +130,6 @@ def run_engine():
     log_event("🚀 Nexus Elite Engine Started")
     init_db()
 
-    import ccxt
     exchange = ccxt.gateio({"enableRateLimit": True})
 
     results = []
@@ -132,10 +141,10 @@ def run_engine():
             for symbol in SYMBOLS
         }
 
-        for future in as_completed(futures, timeout=60):
+        for future in as_completed(futures):
             symbol = futures[future]
             try:
-                result = future.result(timeout=10)
+                result = future.result(timeout=15)
                 if result:
                     results.append(result)
             except Exception as e:
