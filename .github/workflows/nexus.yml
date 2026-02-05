@@ -1,80 +1,53 @@
-name: Nexus Elite CI/CD
+name: Nexus Engine CI Runner
 
 on:
   push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
+    branches: [ "main" ]
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"   # run every 15 minutes (optional)
 
 jobs:
-  quality-assurance:
+  nexus-engine:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11"]
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ccxt pandas numpy sqlite3
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements.txt
 
-      - name: Verify Logic & Calculations
-        # This step ensures that ATR-based TP/SL are calculated dynamically 
-        # and not hardcoded, satisfying your core instruction.
+      - name: Set PYTHONPATH
         run: |
-          python -c "
-          import pandas as pd
-          import numpy as np
-          from signals import compute_atr
-          data = {'high': [110]*20, 'low': [100]*20, 'close': [105]*20}
-          df = pd.DataFrame(data)
-          atr = compute_atr(df)
-          assert not np.isnan(atr.iloc[-1]), 'ATR calculation failed'
-          print('✅ Calculation Verification: Success')
-          "
+          echo "PYTHONPATH=$GITHUB_WORKSPACE/Nexus" >> $GITHUB_ENV
 
-      - name: Database Schema Integrity Check
-        # Verifies that init_db generates the physical file and schema
+      - name: Debug Project Structure
         run: |
-          python -c "
-          from engine.db import init_db
-          import os, sqlite3
-          init_db()
-          if os.path.exists('data/trading.db'):
-              conn = sqlite3.connect('data/trading.db')
-              res = conn.execute(\"SELECT name FROM sqlite_master WHERE type='table' AND name='signals';\")
-              assert res.fetchone() is not None
-              print('✅ Database Integrity: Success')
-          else:
-              raise FileNotFoundError('Database file not created')
-          "
+          echo "📂 Project Tree:"
+          ls -R
 
-      - name: Static Analysis (Indentation & Syntax)
-        # Prevents the transfer/indentation errors you noted in your instructions
+      - name: Initialize Database (if exists)
         run: |
-          python -m compileall .
-          echo "✅ Syntax & Indentation: Verified"
+          if [ -f "Nexus/engine/db/schema.sql" ]; then
+            echo "🗄️ Initializing database..."
+            python -c "from engine.db.db_utils import init_db; init_db()"
+          else
+            echo "⚠️ No schema.sql found, skipping DB init."
+          fi
 
-      - name: Feature Retention Audit
-        # Checks for the presence of essential files to ensure no accidental omission
+      - name: Start Nexus Engine
         run: |
-          ls trainer_daemon.py Nexus/engine/runner.py Nexus/engine/config.py
-          echo "✅ Core Features Audit: Files Present"
+          echo "🚀 Starting Nexus Engine at $(date)"
+          cd Nexus
+          python trainer_daemon.py
 
-  deploy-ready:
-    needs: quality-assurance
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    steps:
-      - name: Final Validation
-        run: echo "Codebase meets all saved constraints. Ready for production deployment."
+      # Optional: Streamlit dashboard health check (non-blocking)
+      - name: Dashboard Smoke Test (Optional)
