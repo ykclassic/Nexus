@@ -1,21 +1,39 @@
-# Nexus/engine/config.py
+import sqlite3
+import os
+from engine.config import DB_PATH
 
-SYMBOLS = [
-    "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "ADA/USDT",
-    "XRP/USDT", "DOGE/USDT", "SUI/USDT", "LTC/USDT", "LINK/USDT"
-]
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
-TIMEFRAME = "5m"
 
-# Quality > Quantity
-MIN_CONFIDENCE = 0.82
+def get_conn():
+    return sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
 
-# Thread control (GitHub safe)
-MAX_THREADS = 4
 
-# Database path (absolute-safe)
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(BASE_DIR, "data", "trading.db")
+def init_db():
+    with get_conn() as conn:
+        c = conn.cursor()
 
-# Discord webhook env variable
-DISCORD_WEBHOOK_ENV = "DISCORD_WEBHOOK"
+        c.execute("""
+        CREATE TABLE IF NOT EXISTS signals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT NOT NULL,
+            exchange TEXT DEFAULT 'gateio',
+            timeframe TEXT DEFAULT '5m',
+            signal_type TEXT CHECK(signal_type IN ('LONG','SHORT')) NOT NULL,
+            strategy TEXT DEFAULT 'nexus_elite',
+
+            entry REAL NOT NULL,
+            tp REAL NOT NULL,
+            sl REAL NOT NULL,
+
+            confidence REAL DEFAULT 0.0,
+
+            status TEXT DEFAULT 'OPEN',
+            exit_price REAL DEFAULT NULL,
+            exit_time TEXT DEFAULT NULL,
+
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+        """)
+
+        conn.commit()
