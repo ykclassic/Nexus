@@ -1,7 +1,6 @@
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# ✅ FIXED IMPORTS (NO Nexus.)
 from engine.config import SYMBOLS, MIN_CONFIDENCE, MAX_THREADS, TIMEFRAME
 from engine.db import init_db, get_conn
 from engine.elite_logger import log_event, log_error
@@ -97,11 +96,11 @@ def process_symbol(exchange, symbol):
             return None
 
         confidence = score_signal({
-            "trend_strength": 0.8,   # placeholder for intelligence layer
+            "trend_strength": 0.8,
             "liquidity_sweep": True,
             "rarity_score": 0.7,
             "probability": 0.75,
-        }) / 100.0  # convert score (0–100) → 0–1
+        }) / 100.0
 
         if confidence < MIN_CONFIDENCE:
             return None
