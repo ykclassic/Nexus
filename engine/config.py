@@ -5,8 +5,16 @@ SYMBOLS = [
     "XRP/USDT", "DOGE/USDT", "SUI/USDT", "LTC/USDT", "LINK/USDT"
 ]
 
-MIN_CONFIDENCE = 0.6
+TIMEFRAME = "5m"
+
+# Elite signal threshold (quality > quantity)
+MIN_CONFIDENCE = 0.82
+
+# Thread control (GitHub-safe)
 MAX_THREADS = 4
-TIMEFRAME = "1h"
-DISCORD_WEBHOOK = "YOUR_DISCORD_WEBHOOK_HERE"  # Or use environment variable
+
+# Database path
 DB_PATH = "data/trading.db"
+
+# Discord webhook env variable
+DISCORD_WEBHOOK_ENV = "DISCORD_WEBHOOK"
