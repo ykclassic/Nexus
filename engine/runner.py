@@ -1,8 +1,7 @@
 import time
-import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from config import SYMBOLS, MIN_CONFIDENCE, MAX_THREADS, TIMEFRAME
+from engine.config import SYMBOLS, MIN_CONFIDENCE, MAX_THREADS, TIMEFRAME
 from engine.db import init_db, get_connection
 from engine.elite_logger import log_event, log_error
 from engine.discord_alert import send_discord_alert
@@ -11,14 +10,7 @@ from engine.trade_lifecycle import create_signal
 from engine.intelligence.signal_scoring import score_signal
 
 
-# ================================
-# ELITE MARKET DATA FETCHER
-# ================================
-
 def fetch_market_data(exchange, symbol):
-    """
-    Fetch OHLCV + ticker data safely with retries.
-    """
     ohlcv = safe_call(exchange.fetch_ohlcv, symbol, TIMEFRAME, limit=50)
     ticker = safe_call(exchange.fetch_ticker, symbol)
 
@@ -35,47 +27,33 @@ def fetch_market_data(exchange, symbol):
         "closes": closes,
         "highs": highs,
         "lows": lows,
-        "volume": ticker.get("quoteVolume", 0)
     }
 
 
-# ================================
-# ELITE SIGNAL LOGIC (QUALITY > QUANTITY)
-# ================================
-
 def elite_signal_logic(market):
-    """
-    Institutional-style signal filtering.
-    Produces very few but high-quality signals.
-    """
-
     closes = market["closes"]
     highs = market["highs"]
     lows = market["lows"]
     price = market["price"]
 
-    # Basic trend detection (simple but effective)
     short_ma = sum(closes[-5:]) / 5
     long_ma = sum(closes[-20:]) / 20
 
     trend = "BULLISH" if short_ma > long_ma else "BEARISH"
 
-    # Liquidity sweep detection (simplified smart money logic)
     sweep_high = highs[-1] > max(highs[-10:-1])
     sweep_low = lows[-1] < min(lows[-10:-1])
 
-    # Volatility filter (avoid dead markets)
     volatility = (max(highs[-10:]) - min(lows[-10:])) / price
 
-    # Risk-reward logic
     if trend == "BULLISH" and sweep_low:
         side = "LONG"
     elif trend == "BEARISH" and sweep_high:
         side = "SHORT"
     else:
-        return None  # reject low-quality setups
+        return None
 
-    if volatility < 0.002:  # too flat → reject
+    if volatility < 0.002:
         return None
 
     entry = price
@@ -93,14 +71,8 @@ def elite_signal_logic(market):
         "entry": entry,
         "sl": sl,
         "tp": tp,
-        "trend": trend,
-        "volatility": volatility
     }
 
-
-# ================================
-# SYMBOL PROCESSOR (THREAD-SAFE)
-# ================================
 
 def process_symbol(exchange, symbol):
     conn = get_connection()
@@ -116,7 +88,6 @@ def process_symbol(exchange, symbol):
 
         confidence = score_signal(raw_signal)
 
-        # HARD QUALITY GATE (few signals only)
         if confidence < MIN_CONFIDENCE:
             return None
 
@@ -126,7 +97,7 @@ def process_symbol(exchange, symbol):
             "entry": round(raw_signal["entry"], 6),
             "sl": round(raw_signal["sl"], 6),
             "tp": round(raw_signal["tp"], 6),
-            "confidence": round(confidence, 4)
+            "confidence": round(confidence, 4),
         }
 
         create_signal(signal)
@@ -143,17 +114,12 @@ def process_symbol(exchange, symbol):
         conn.close()
 
 
-# ================================
-# ENGINE RUNNER (GITHUB-SAFE)
-# ================================
-
 def run_engine():
     start_time = time.time()
 
     log_event("🚀 Nexus Elite Engine Started")
     init_db()
 
-    # Lazy import to avoid GitHub Actions import crash
     import ccxt
     exchange = ccxt.gateio({"enableRateLimit": True})
 
@@ -179,10 +145,7 @@ def run_engine():
     duration = round(time.time() - start_time, 2)
 
     log_event(
-        f"📊 Engine Summary → "
-        f"Signals: {len(results)} | "
-        f"Errors: {errors} | "
-        f"Runtime: {duration}s"
+        f"📊 Engine Summary → Signals: {len(results)} | Errors: {errors} | Runtime: {duration}s"
     )
 
     return results
