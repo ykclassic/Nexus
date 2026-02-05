@@ -1,82 +1,67 @@
-name: Nexus Engine Runner
+ name: Nexus Engine Runner
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 * * * *"   # runs every hour
+    - cron: "0 * * * *"
 
 jobs:
   nexus-engine:
     runs-on: ubuntu-latest
-    timeout-minutes: 8   # hard job limit
+    timeout-minutes: 8
 
     steps:
-      # ============================
-      # 1) Checkout Repo
-      # ============================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ============================
-      # 2) Setup Python
-      # ============================
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # ============================
-      # 3) Install Dependencies
-      # ============================
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ============================
-      # 4) Set PYTHONPATH (CRITICAL)
-      # ============================
+      # ✅ CRITICAL FIX: set working directory
+      - name: Set working directory
+        run: |
+          echo "PROJECT_ROOT=$(pwd)" >> $GITHUB_ENV
+
+      # ✅ CRITICAL FIX: Python path
       - name: Set PYTHONPATH
         run: |
-          echo "PYTHONPATH=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+          echo "PYTHONPATH=$PROJECT_ROOT" >> $GITHUB_ENV
 
-      # ============================
-      # 5) Debug Structure (optional but useful)
-      # ============================
-      - name: Show project structure
+      - name: Show structure (debug)
         run: |
-          echo "📂 Project tree:"
+          echo "📂 Root directory:"
+          pwd
+          echo "📂 Files:"
           ls -R
 
-      # ============================
-      # 6) Run Nexus Engine (Safe Mode)
-      # ============================
       - name: Run Nexus Engine
-        id: run-engine
         timeout-minutes: 5
         run: |
           echo "🚀 Starting Nexus Engine at $(date)"
-          
-          # Hard timeout (240s)
+
           timeout 240 python trainer_daemon.py
-          
+
           EXIT_CODE=$?
           echo "Exit code: $EXIT_CODE"
-          
+
           if [ $EXIT_CODE -eq 124 ]; then
-            echo "❌ Engine timed out (possible infinite loop)"
+            echo "❌ Engine timed out"
             exit 1
           elif [ $EXIT_CODE -ne 0 ]; then
             echo "❌ Engine crashed"
             exit $EXIT_CODE
           fi
-          
-          echo "✅ Nexus Engine completed at $(date)"
 
-      # ============================
-      # 7) Failure Handler
-      # ============================
-      - name: Workflow failed
+          echo "✅ Engine completed successfully"
+
+      - name: Failure handler
         if: failure()
         run: |
           echo "⚠️ Nexus Engine failed. Check logs."
