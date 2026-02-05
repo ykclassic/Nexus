@@ -1,151 +1,77 @@
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-from engine.config import SYMBOLS, MIN_CONFIDENCE, MAX_THREADS, TIMEFRAME
-from engine.db import init_db, get_connection
-from engine.elite_logger import log_event, log_error
-from engine.discord_alert import send_discord_alert
-from engine.exchange_retry import safe_call
-from engine.trade_lifecycle import create_signal
-from engine.intelligence.signal_scoring import score_signal
-
-
-def fetch_market_data(exchange, symbol):
-    ohlcv = safe_call(exchange.fetch_ohlcv, symbol, TIMEFRAME, limit=50)
-    ticker = safe_call(exchange.fetch_ticker, symbol)
-
-    if not ohlcv or not ticker:
-        return None
-
-    closes = [c[4] for c in ohlcv]
-    highs = [c[2] for c in ohlcv]
-    lows = [c[3] for c in ohlcv]
-
-    return {
-        "symbol": symbol,
-        "price": ticker["last"],
-        "closes": closes,
-        "highs": highs,
-        "lows": lows,
-    }
+from concurrent.futures import ThreadPoolExecutor
+from .exchange import create_exchange, safe_fetch
+from .signals import generate_signal
+from .lifecycle import update_trades
+from .db import get_conn
+from .config import SYMBOLS, TIMEFRAME, MAX_WORKERS
+from .notifier import send
+from .logger import log_error
+import logging
 
 
-def elite_signal_logic(market):
-    closes = market["closes"]
-    highs = market["highs"]
-    lows = market["lows"]
-    price = market["price"]
-
-    short_ma = sum(closes[-5:]) / 5
-    long_ma = sum(closes[-20:]) / 20
-
-    trend = "BULLISH" if short_ma > long_ma else "BEARISH"
-
-    sweep_high = highs[-1] > max(highs[-10:-1])
-    sweep_low = lows[-1] < min(lows[-10:-1])
-
-    volatility = (max(highs[-10:]) - min(lows[-10:])) / price
-
-    if trend == "BULLISH" and sweep_low:
-        side = "LONG"
-    elif trend == "BEARISH" and sweep_high:
-        side = "SHORT"
-    else:
-        return None
-
-    if volatility < 0.002:
-        return None
-
-    entry = price
-
-    if side == "LONG":
-        sl = entry * 0.995
-        tp = entry * 1.015
-    else:
-        sl = entry * 1.005
-        tp = entry * 0.985
-
-    return {
-        "symbol": market["symbol"],
-        "side": side,
-        "entry": entry,
-        "sl": sl,
-        "tp": tp,
-    }
-
-
-def process_symbol(exchange, symbol):
-    conn = get_connection()
-
+def fetch_signal(exchange, symbol):
+    """THREAD-SAFE: Only fetch data & generate signal."""
     try:
-        market = fetch_market_data(exchange, symbol)
-        if not market:
+        ohlcv = safe_fetch(exchange, symbol, TIMEFRAME)
+        if not ohlcv:
             return None
 
-        raw_signal = elite_signal_logic(market)
-        if not raw_signal:
-            return None
-
-        confidence = score_signal(raw_signal)
-
-        if confidence < MIN_CONFIDENCE:
-            return None
-
-        signal = {
-            "symbol": raw_signal["symbol"],
-            "side": raw_signal["side"],
-            "entry": round(raw_signal["entry"], 6),
-            "sl": round(raw_signal["sl"], 6),
-            "tp": round(raw_signal["tp"], 6),
-            "confidence": round(confidence, 4),
-        }
-
-        create_signal(signal)
-        send_discord_alert(signal)
-
-        log_event(f"✅ Elite signal generated: {signal}")
+        signal = generate_signal(symbol, ohlcv)
         return signal
-
     except Exception as e:
-        log_error(f"❌ Symbol processing error [{symbol}]: {e}")
+        log_error(symbol, e)
         return None
 
-    finally:
-        conn.close()
+
+def save_signal(conn, signal):
+    """MAIN THREAD ONLY: Write to DB safely."""
+    if not signal:
+        return
+
+    c = conn.cursor()
+    c.execute("""
+        INSERT INTO signals(symbol, signal_type, entry, tp, sl, confidence)
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        signal["symbol"],
+        signal["signal_type"],
+        signal["entry"],
+        signal["tp"],
+        signal["sl"],
+        signal["confidence"]
+    ))
+    conn.commit()
 
 
 def run_engine():
-    start_time = time.time()
+    logging.info("Nexus Engine Started")
 
-    log_event("🚀 Nexus Elite Engine Started")
-    init_db()
+    exchange = create_exchange()
 
-    import ccxt
-    exchange = ccxt.gateio({"enableRateLimit": True})
+    with get_conn() as conn:
 
-    results = []
-    errors = 0
+        # 1) Update existing trades (TP/SL lifecycle)
+        update_trades(exchange, conn)
 
-    with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
-        futures = {
-            executor.submit(process_symbol, exchange, symbol): symbol
-            for symbol in SYMBOLS
-        }
+        # 2) Fetch signals in parallel (NO DB HERE)
+        signals = []
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            results = executor.map(lambda s: fetch_signal(exchange, s), SYMBOLS)
+            for sig in results:
+                if sig:
+                    signals.append(sig)
 
-        for future in as_completed(futures, timeout=60):
-            symbol = futures[future]
-            try:
-                result = future.result(timeout=10)
-                if result:
-                    results.append(result)
-            except Exception as e:
-                errors += 1
-                log_error(f"Thread failure [{symbol}]: {e}")
+        # 3) Save signals sequentially (DB SAFE)
+        for sig in signals:
+            save_signal(conn, sig)
 
-    duration = round(time.time() - start_time, 2)
+        # 4) Send top signal alert
+        if signals:
+            top = max(signals, key=lambda x: x["confidence"])
+            send(
+                f"🚀 TOP SIGNAL: {top['symbol']} {top['signal_type']} | "
+                f"Entry {top['entry']:.4f} | TP {top['tp']:.4f} | SL {top['sl']:.4f} | "
+                f"Conf {top['confidence']:.2%}"
+            )
 
-    log_event(
-        f"📊 Engine Summary → Signals: {len(results)} | Errors: {errors} | Runtime: {duration}s"
-    )
-
-    return results
+    logging.info("Nexus Engine Finished")
