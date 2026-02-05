@@ -1,20 +1,34 @@
+# Nexus/engine/intelligence/signal_scoring.py
 
-def score_signal(features):
+def score_signal(signal):
     """
-    features = dict of signal metrics
+    Input: raw signal dict from strategy
+    Output: confidence score (0 → 1)
     """
-    score = 0
 
-    if features.get("trend_strength", 0) > 0.7:
-        score += 30
+    entry = signal["entry"]
+    tp = signal["tp"]
+    sl = signal["sl"]
 
-    if features.get("liquidity_sweep"):
-        score += 25
+    # Risk-reward ratio
+    rr = abs(tp - entry) / abs(entry - sl)
 
-    if features.get("rarity_score", 0) > 0.8:
-        score += 25
+    score = 0.0
 
-    if features.get("probability", 0) > 0.75:
-        score += 20
+    # Reward high RR
+    if rr >= 3:
+        score += 0.4
+    elif rr >= 2:
+        score += 0.3
+    elif rr >= 1.5:
+        score += 0.2
 
-    return min(score, 100)
+    # Penalize tight SL (noise risk)
+    sl_distance = abs(entry - sl) / entry
+    if sl_distance > 0.003:
+        score += 0.2
+
+    # Direction bias (future AI hook)
+    score += 0.3
+
+    return min(round(score, 4), 1.0)
