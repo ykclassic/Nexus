@@ -1,162 +1,40 @@
-# engine/runner.py
-from engine.db import init_db, get_connection
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-from engine.config import SYMBOLS, MIN_CONFIDENCE, MAX_THREADS, TIMEFRAME
-from engine.db import init_db, get_connection
-from engine.elite_logger import log_event, log_error
-from engine.discord_alert import send_discord_alert
-from engine.exchange_retry import safe_call
+import threading
+from engine.config import SYMBOLS, TIMEFRAME, MAX_THREADS
 from engine.trade_lifecycle import create_signal
-from engine.intelligence.signal_scoring import score_signal
-
-import ccxt
-
-
-def fetch_market_data(exchange, symbol):
-    ohlcv = safe_call(exchange.fetch_ohlcv, symbol, TIMEFRAME, limit=50)
-    ticker = safe_call(exchange.fetch_ticker, symbol)
-
-    if not ohlcv or not ticker:
-        return None
-
-    closes = [c[4] for c in ohlcv]
-    highs = [c[2] for c in ohlcv]
-    lows = [c[3] for c in ohlcv]
-
-    return {
-        "symbol": symbol,
-        "price": ticker["last"],
-        "closes": closes,
-        "highs": highs,
-        "lows": lows,
-    }
+from engine.exchange import fetch_price
+from engine.logger import log_info
 
 
-def elite_signal_logic(market):
-    closes = market["closes"]
-    highs = market["highs"]
-    lows = market["lows"]
-    price = market["price"]
+def process_symbol(symbol: str):
+    price = fetch_price(symbol)
 
-    short_ma = sum(closes[-5:]) / 5
-    long_ma = sum(closes[-20:]) / 20
+    # Example decision logic (you can plug AI here)
+    direction = "LONG" if price % 2 == 0 else "SHORT"
+    confidence = 0.75  # placeholder, replace with AI score
 
-    trend_strength = abs(short_ma - long_ma) / price
-    trend = "BULLISH" if short_ma > long_ma else "BEARISH"
+    signal = create_signal(
+        asset=symbol,
+        timeframe=TIMEFRAME,
+        direction=direction,
+        confidence=confidence,
+        price=price,
+        strategy="nexus_alpha"
+    )
 
-    sweep_high = highs[-1] > max(highs[-10:-1])
-    sweep_low = lows[-1] < min(lows[-10:-1])
-
-    volatility = (max(highs[-10:]) - min(lows[-10:])) / price
-
-    if trend == "BULLISH" and sweep_low:
-        side = "LONG"
-    elif trend == "BEARISH" and sweep_high:
-        side = "SHORT"
-    else:
-        return None
-
-    if volatility < 0.002:
-        return None
-
-    entry = price
-
-    if side == "LONG":
-        sl = entry * 0.995
-        tp = entry * 1.015
-    else:
-        sl = entry * 1.005
-        tp = entry * 0.985
-
-    rr_ratio = abs(tp - entry) / abs(entry - sl)
-
-    return {
-        "symbol": market["symbol"],
-        "side": side,
-        "entry": entry,
-        "sl": sl,
-        "tp": tp,
-        "trend_strength": trend_strength,
-        "liquidity_sweep": sweep_high or sweep_low,
-        "volatility": volatility,
-        "rr_ratio": rr_ratio,
-        "structure_break": True,
-    }
-
-
-def process_symbol(exchange, symbol):
-    conn = get_connection()
-
-    try:
-        market = fetch_market_data(exchange, symbol)
-        if not market:
-            return None
-
-        raw_signal = elite_signal_logic(market)
-        if not raw_signal:
-            return None
-
-        confidence = score_signal(raw_signal) / 100
-
-        if confidence < MIN_CONFIDENCE:
-            return None
-
-        signal = {
-            "symbol": raw_signal["symbol"],
-            "side": raw_signal["side"],
-            "entry": round(raw_signal["entry"], 6),
-            "sl": round(raw_signal["sl"], 6),
-            "tp": round(raw_signal["tp"], 6),
-            "confidence": round(confidence, 4),
-        }
-
-        create_signal(signal)
-        send_discord_alert(signal)
-
-        log_event(f"✅ Elite signal generated: {signal}")
-        return signal
-
-    except Exception as e:
-        log_error(f"❌ Symbol processing error [{symbol}]: {e}")
-        return None
-
-    finally:
-        conn.close()
+    if signal:
+        log_info(f"✅ Signal created: {signal}")
 
 
 def run_engine():
-    start_time = time.time()
+    threads = []
 
-    log_event("🚀 Nexus Elite Engine Started")
-    init_db()
+    for symbol in SYMBOLS:
+        if len(threads) >= MAX_THREADS:
+            break
 
-    exchange = ccxt.gateio({"enableRateLimit": True})
+        t = threading.Thread(target=process_symbol, args=(symbol,))
+        t.start()
+        threads.append(t)
 
-    results = []
-    errors = 0
-
-    with ThreadPoolExecutor(max_workers=MAX_THREADS) as executor:
-        futures = {
-            executor.submit(process_symbol, exchange, symbol): symbol
-            for symbol in SYMBOLS
-        }
-
-        for future in as_completed(futures):
-            symbol = futures[future]
-            try:
-                result = future.result(timeout=10)
-                if result:
-                    results.append(result)
-            except Exception as e:
-                errors += 1
-                log_error(f"Thread failure [{symbol}]: {e}")
-
-    duration = round(time.time() - start_time, 2)
-
-    log_event(
-        f"📊 Engine Summary → Signals: {len(results)} | Errors: {errors} | Runtime: {duration}s"
-    )
-
-    return results
+    for t in threads:
+        t.join()
