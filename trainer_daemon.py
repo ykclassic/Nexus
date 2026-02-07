@@ -1,11 +1,13 @@
-import sys
-import os
+# trainer_daemon.py
 
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, ROOT_DIR)
+import os
+import sys
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, BASE_DIR)
 
 from engine.runner import run_engine
 
+
 if __name__ == "__main__":
     run_engine()
-    print("✅ Nexus Engine finished")
