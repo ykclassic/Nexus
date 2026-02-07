@@ -1,10 +1,8 @@
-from engine.runner import run_engine
-from engine.db import init_db
+import sys, os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-def main():
-    print("🚀 Starting Nexus Engine...")
-    init_db()
-    run_engine()
+from engine.runner import run_engine
 
 if __name__ == "__main__":
-    main()
+    run_engine()
+    print("✅ Nexus Engine Completed")
