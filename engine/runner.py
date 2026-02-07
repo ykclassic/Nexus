@@ -1,8 +1,10 @@
+# engine/runner.py
+
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from engine.config import SYMBOLS, MIN_CONFIDENCE, MAX_THREADS, TIMEFRAME
-from engine.db import init_db, get_conn
+from engine.db import init_db, get_connection
 from engine.elite_logger import log_event, log_error
 from engine.discord_alert import send_discord_alert
 from engine.exchange_retry import safe_call
@@ -13,27 +15,23 @@ import ccxt
 
 
 def fetch_market_data(exchange, symbol):
-    try:
-        ohlcv = safe_call(lambda: exchange.fetch_ohlcv(symbol, TIMEFRAME, limit=50))
-        ticker = safe_call(lambda: exchange.fetch_ticker(symbol))
+    ohlcv = safe_call(exchange.fetch_ohlcv, symbol, TIMEFRAME, limit=50)
+    ticker = safe_call(exchange.fetch_ticker, symbol)
 
-        if not ohlcv or not ticker:
-            return None
-
-        closes = [c[4] for c in ohlcv]
-        highs = [c[2] for c in ohlcv]
-        lows = [c[3] for c in ohlcv]
-
-        return {
-            "symbol": symbol,
-            "price": ticker["last"],
-            "closes": closes,
-            "highs": highs,
-            "lows": lows,
-        }
-    except Exception as e:
-        log_error(f"Market data error [{symbol}]: {e}")
+    if not ohlcv or not ticker:
         return None
+
+    closes = [c[4] for c in ohlcv]
+    highs = [c[2] for c in ohlcv]
+    lows = [c[3] for c in ohlcv]
+
+    return {
+        "symbol": symbol,
+        "price": ticker["last"],
+        "closes": closes,
+        "highs": highs,
+        "lows": lows,
+    }
 
 
 def elite_signal_logic(market):
@@ -42,12 +40,10 @@ def elite_signal_logic(market):
     lows = market["lows"]
     price = market["price"]
 
-    if len(closes) < 20:
-        return None
-
     short_ma = sum(closes[-5:]) / 5
     long_ma = sum(closes[-20:]) / 20
 
+    trend_strength = abs(short_ma - long_ma) / price
     trend = "BULLISH" if short_ma > long_ma else "BEARISH"
 
     sweep_high = highs[-1] > max(highs[-10:-1])
@@ -74,17 +70,24 @@ def elite_signal_logic(market):
         sl = entry * 1.005
         tp = entry * 0.985
 
+    rr_ratio = abs(tp - entry) / abs(entry - sl)
+
     return {
         "symbol": market["symbol"],
         "side": side,
         "entry": entry,
         "sl": sl,
         "tp": tp,
+        "trend_strength": trend_strength,
+        "liquidity_sweep": sweep_high or sweep_low,
+        "volatility": volatility,
+        "rr_ratio": rr_ratio,
+        "structure_break": True,
     }
 
 
 def process_symbol(exchange, symbol):
-    conn = get_conn()
+    conn = get_connection()
 
     try:
         market = fetch_market_data(exchange, symbol)
@@ -95,19 +98,14 @@ def process_symbol(exchange, symbol):
         if not raw_signal:
             return None
 
-        confidence = score_signal({
-            "trend_strength": 0.8,
-            "liquidity_sweep": True,
-            "rarity_score": 0.7,
-            "probability": 0.75,
-        }) / 100.0
+        confidence = score_signal(raw_signal) / 100
 
         if confidence < MIN_CONFIDENCE:
             return None
 
         signal = {
             "symbol": raw_signal["symbol"],
-            "signal_type": raw_signal["side"],
+            "side": raw_signal["side"],
             "entry": round(raw_signal["entry"], 6),
             "sl": round(raw_signal["sl"], 6),
             "tp": round(raw_signal["tp"], 6),
@@ -145,7 +143,7 @@ def run_engine():
             for symbol in SYMBOLS
         }
 
-        for future in as_completed(futures, timeout=60):
+        for future in as_completed(futures):
             symbol = futures[future]
             try:
                 result = future.result(timeout=10)
