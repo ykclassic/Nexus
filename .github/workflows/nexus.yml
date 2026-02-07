@@ -1,55 +1,33 @@
-name: Nexus Elite Engine Execution
+name: Nexus Engine Runner
 
 on:
+  workflow_dispatch:
   schedule:
-    - cron: '*/5 * * * *'  # Trigger every 5 minutes
-  workflow_dispatch:      # Manual trigger for ad-hoc runs
+    - cron: "0 * * * *"
 
 jobs:
-  run-engine:
+  run-nexus:
     runs-on: ubuntu-latest
-    # Prevent concurrent runs to avoid SQLite database locking
-    concurrency: 
-      group: nexus-engine
-      cancel-in-progress: false
+    timeout-minutes: 10
 
     steps:
-      - name: 🛰️ Checkout Repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: 🐍 Setup Python 3.10
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-          cache: 'pip'
+          python-version: "3.11"
 
-      - name: 📦 Install Dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ccxt pandas numpy requests
-          # Ensure data directory exists
-          mkdir -p data
+          pip install -r requirements.txt
 
-      - name: 🧠 Run Nexus Elite Engine
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-        run: python trainer_daemon.py
+      - name: Set PYTHONPATH
+        run: echo "PYTHONPATH=$(pwd)" >> $GITHUB_ENV
 
-      - name: 🛡️ Persist Trading Data
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: nexus-trading-data
-          path: |
-            data/trading.db
-            engine.log
-          retention-days: 7
-
-      - name: 🔄 Auto-Commit Database (Optional)
-        if: success()
+      - name: Run Nexus Engine
         run: |
-          git config --local user.email "nexus-bot@github.com"
-          git config --local user.name "Nexus AI Bot"
-          git add data/trading.db
-          git commit -m "📊 Sync: Updated trade signals and engine metrics [skip ci]" || echo "No changes to commit"
-          git push
+          echo "🚀 Starting Nexus Engine..."
+          python trainer_daemon.py
