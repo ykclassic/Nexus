@@ -6,7 +6,7 @@ SYMBOLS = [
 ]
 
 TIMEFRAME = "5m"
-MIN_CONFIDENCE = 82  # Out of 100
+MIN_CONFIDENCE = 20  # Out of 100
 MAX_THREADS = 4
 DB_PATH = "data/trading.db"
 DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
