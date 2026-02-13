@@ -3,31 +3,37 @@ name: Nexus Engine Runner
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "*/20 * * * *" # Every 20 mins
 
 jobs:
   run-nexus:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-
+    permissions:
+      contents: write
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install ccxt pandas numpy requests
 
-      - name: Set PYTHONPATH
-        run: echo "PYTHONPATH=$(pwd)" >> $GITHUB_ENV
+      - name: Run Engine
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: python trainer_daemon.py
 
-      - name: Run Nexus Engine
+      - name: Commit Database Changes
         run: |
-          echo "🚀 Starting Nexus Engine..."
-          python trainer_daemon.py
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data/trading.db
+          git commit -m "Update Trading DB [skip ci]" || echo "No changes to commit"
+          git push
