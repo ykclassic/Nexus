@@ -1,25 +1,14 @@
-import datetime
-import json
-import os
+import logging
+from datetime import datetime
 
-LOG_DIR = "logs"
-os.makedirs(LOG_DIR, exist_ok=True)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(message)s',
+    handlers=[logging.StreamHandler()]
+)
 
-def _write_log(level, message, data=None):
-    timestamp = datetime.datetime.utcnow().isoformat()
-    log_entry = {
-        "time": timestamp,
-        "level": level,
-        "message": message,
-        "data": data or {}
-    }
+def log_event(message):
+    logging.info(message)
 
-    log_file = os.path.join(LOG_DIR, "nexus.log")
-    with open(log_file, "a") as f:
-        f.write(json.dumps(log_entry) + "\n")
-
-def log_event(message, data=None):
-    _write_log("EVENT", message, data)
-
-def log_error(message, data=None):
-    _write_log("ERROR", message, data)
+def log_error(message):
+    logging.error(message)
