@@ -1,12 +1,12 @@
 import os
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DB_PATH = os.path.join(BASE_DIR, "data", "trading.db")
+SYMBOLS = [
+    "BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "ADA/USDT",
+    "XRP/USDT", "DOGE/USDT", "SUI/USDT", "LTC/USDT", "LINK/USDT"
+]
 
-SYMBOLS = ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
-TIMEFRAME = "1h"
-
-MIN_CONFIDENCE = 0.75
-MAX_THREADS = 5
-
-DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK", "")
+TIMEFRAME = "5m"
+MIN_CONFIDENCE = 82  # Out of 100
+MAX_THREADS = 4
+DB_PATH = "data/trading.db"
+DISCORD_WEBHOOK = os.getenv("DISCORD_WEBHOOK")
