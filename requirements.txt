@@ -1,6 +1,17 @@
+# --- Frontend & UI ---
+streamlit
+plotly
+
+# --- Data & Finance ---
+pandas
+numpy
 ccxt
 requests
-numpy
-pandas
-plotly
-streamlit
+
+# --- Intelligence & Machine Learning ---
+vaderSentiment
+tensorflow-cpu
+scikit-learn
+
+# --- Utilities ---
+python-dotenv
