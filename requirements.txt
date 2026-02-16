@@ -3,6 +3,7 @@ streamlit
 plotly
 
 # --- Data & Finance ---
+pandas_ta_classic
 pandas
 numpy
 ccxt
