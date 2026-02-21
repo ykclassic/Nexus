@@ -37,8 +37,6 @@ jobs:
           git add data/trading.db
           git commit -m "Update Trading DB [skip ci]" || echo "No changes to commit"
           git push
-      - name: Reset Database
-        run: python reset_db.py
-        
+      
       - name: Generate Market Report
         run: python report.py
