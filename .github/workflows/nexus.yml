@@ -3,7 +3,7 @@ name: Nexus Engine Runner
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/20 * * * *" # Every 20 mins
+    - cron: "*/0 * * * *"
 
 jobs:
   run-nexus:
