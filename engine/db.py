@@ -1,42 +1,40 @@
 import sqlite3
 import os
-from engine.config import DB_PATH
-from engine.elite_logger import log_event, log_error
+
+# Ensure the data directory exists relative to the project root
+DB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+DB_PATH = os.path.join(DB_DIR, "trading.db")
 
 def get_connection():
-    return sqlite3.connect(DB_PATH, timeout=30)
+    """Establishes and returns a connection to the SQLite database."""
+    # Create the data directory if it doesn't exist
+    if not os.path.exists(DB_DIR):
+        os.makedirs(DB_DIR)
+        
+    return sqlite3.connect(DB_PATH)
 
 def init_db():
-    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    """Initializes the database schema. Creates the table if it doesn't exist."""
     conn = get_connection()
     try:
-        c = conn.cursor()
-        
-        # Check if table exists and has the correct columns
-        c.execute("SELECT count(name) FROM sqlite_master WHERE type='table' AND name='signals'")
-        if c.fetchone()[0] == 1:
-            # Check for 'symbol' column specifically
-            c.execute("PRAGMA table_info(signals)")
-            columns = [info[1] for info in c.fetchall()]
-            if 'symbol' not in columns:
-                log_event("⚠️ Outdated schema detected. Rebuilding signals table...")
-                c.execute("DROP TABLE signals")
-        
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS signals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            symbol TEXT NOT NULL,
-            side TEXT CHECK(side IN ('LONG','SHORT')) NOT NULL,
-            entry REAL NOT NULL,
-            tp REAL NOT NULL,
-            sl REAL NOT NULL,
-            confidence REAL DEFAULT 0.0,
-            status TEXT DEFAULT 'OPEN',
-            created_at TEXT DEFAULT (datetime('now'))
-        )
+        curr = conn.cursor()
+        # Create the table with the exact schema needed for the Nexus Engine
+        curr.execute("""
+            CREATE TABLE IF NOT EXISTS signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                side TEXT NOT NULL,
+                entry REAL NOT NULL,
+                tp REAL NOT NULL,
+                sl REAL NOT NULL,
+                confidence REAL NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
         """)
         conn.commit()
-    except Exception as e:
-        log_error(f"Database Init Error: {e}")
     finally:
         conn.close()
+
+if __name__ == "__main__":
+    init_db()
+    print("✅ Database initialized successfully at:", DB_PATH)
