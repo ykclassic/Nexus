@@ -22,7 +22,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install ccxt pandas numpy requests
+          pip install ccxt==4.2.25 pandas numpy requests
 
       - name: Run Engine
         env:
